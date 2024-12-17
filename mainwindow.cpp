@@ -64,6 +64,8 @@ void MainWindow::setupUI()
         sourcesData[source] = data;
     }
 
+    sourcesList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(sourcesList, &QListWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
 
     // Connect Source selection signal
     connect(sourcesList, &QListWidget::itemClicked, this, &MainWindow::onSourceSelected);
@@ -77,11 +79,23 @@ void MainWindow::setupUI()
     connect(addSourceButton, &QPushButton::clicked, [this, sourceInput]() {
         QString newSource = sourceInput->text().trimmed();
         if (!newSource.isEmpty() && !sourcesList->findItems(newSource, Qt::MatchExactly).isEmpty()) {
+            QMessageBox::warning(this, "Error", "Given source has already been added!");
+            sourceInput->clear();
             return;  // Don't allow duplicate Sources
         }
         if (!newSource.isEmpty()) {
             sourcesList->addItem(newSource);
             saveSourceToFile(newSource);
+            SourceData *data = new SourceData;
+            data->voltageSeries = new QLineSeries();
+            data->currentSeries = new QLineSeries();
+            data->temperatureSeries = new QLineSeries();
+            data->humiditySeries = new QLineSeries();
+            data->lastVoltage = 0;
+            data->lastCurrent = 0;
+            data->lastTemperature = 0;
+            data->lastHumidity = 0;
+            sourcesData[newSource] = data;
             sourceInput->clear();
         }
     });
@@ -183,22 +197,6 @@ QChart* MainWindow::createChart(const QString &title, double yMin, double yMax)
 }
 void MainWindow::onSourceSelected(QListWidgetItem* item)
 {
-    /*currentSource = item->text();
-
-    // Clear existing data
-    voltageSeries->clear();
-    currentSeries->clear();
-    temperatureSeries->clear();
-    humiditySeries->clear();
-
-    // Update chart titles
-    voltageChart->setTitle(QString("Voltage (V) - %1").arg(currentSource));
-    currentChart->setTitle(QString("Current (A) - %1").arg(currentSource));
-    temperatureChart->setTitle(QString("Temperature (°C) - %1").arg(currentSource));
-    humidityChart->setTitle(QString("Humidity (%) - %1").arg(currentSource));
-
-    // Reset time counter when switching Sources
-    timeCounter = 0;*/
     currentSource = item->text();
 
     // Update chart titles
@@ -299,34 +297,6 @@ void MainWindow::checkAlarms(const QString &station, SourceData *data)
 
 void MainWindow::updateCharts()
 {
-    /*if (currentSource.isEmpty()) return;
-
-    timeCounter += 1;
-
-    // Generate random values (replace with your actual data)
-    // Okay so somehow we have to obtain the current Source name and
-    // fetch values from remote by name of the Source.
-    double voltage = rand() % 250;
-    double current = rand() % 100;
-    double temperature = 20 + (rand() % 30);
-    double humidity = rand() % 100;
-
-    voltageSeries->append(timeCounter, voltage);
-    currentSeries->append(timeCounter, current);
-    temperatureSeries->append(timeCounter, temperature);
-    humiditySeries->append(timeCounter, humidity);
-
-    if(timeCounter > 10) {
-        voltageSeries->remove(0);
-        currentSeries->remove(0);
-        temperatureSeries->remove(0);
-        humiditySeries->remove(0);
-    }
-
-    // Update axes ranges
-    for(QChart *chart : {voltageChart, currentChart, temperatureChart, humidityChart}) {
-        chart->axes(Qt::Horizontal).first()->setRange(qMax(0.0, timeCounter - 10), timeCounter);
-    }*/
     timeCounter += 1;
 
     // Update data for all stations
@@ -339,6 +309,15 @@ void MainWindow::updateCharts()
         data->lastCurrent = rand() % 100;
         data->lastTemperature = 20 + (rand() % 30);
         data->lastHumidity = rand() % 100;
+
+        // data->lastVoltage = getVoltage(data)
+        // data->lastCurrent = getCurrent(data)
+        // data->lastTemperature = getTemperature(data)
+        // data->lastHumidity = getHumidity(data)
+        //
+        // getXYZ(x) -> y
+        // @x = source
+        // @y = read value
 
         // Only store last 10 seconds of data
         if(data->voltageSeries->count() >= 10) {
@@ -404,4 +383,62 @@ void MainWindow::saveSourceToFile(const QString &SourceName)
     QTextStream out(&file);
     out << SourceName << "\n";  // Append the new Source name to the file
     file.close();
+}
+
+
+void MainWindow::showContextMenu(const QPoint &pos)
+{
+    QPoint globalPos = sourcesList->mapToGlobal(pos);
+    QListWidgetItem* item = sourcesList->itemAt(pos);
+
+    if (item) {
+        QMenu contextMenu;
+        QAction* removeAction = contextMenu.addAction("Remove Source");
+        QAction* selectedAction = contextMenu.exec(globalPos);
+
+        if (selectedAction == removeAction) {
+            removeSource();
+        }
+    }
+}
+
+void MainWindow::removeSource()
+{
+    QListWidgetItem* item = sourcesList->currentItem();
+    if (!item) return;
+
+    QString sourceToRemove = item->text();
+
+    // Clean up data for the station
+    if (sourcesData.contains(sourceToRemove)) {
+        SourceData* data = sourcesData[sourceToRemove];
+        delete data->voltageSeries;
+        delete data->currentSeries;
+        delete data->temperatureSeries;
+        delete data->humiditySeries;
+        delete data;
+        sourcesData.remove(sourceToRemove);
+    }
+
+    // Remove from list and select another item if available
+    delete item;
+    if (sourcesList->count() > 0) {
+        sourcesList->setCurrentRow(0);
+        onSourceSelected(sourcesList->currentItem());
+    }
+
+    updateSourcesFile();
+}
+
+
+void MainWindow::updateSourcesFile()
+{
+    QFile file(sourcesFile);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        for (int i = 0; i < sourcesList->count(); i++) {
+            out << sourcesList->item(i)->text() << "\n";
+        }
+        file.close();
+    }
 }

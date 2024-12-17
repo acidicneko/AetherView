@@ -37,6 +37,9 @@ public:
 private slots:
     void updateCharts();
     void onSourceSelected(QListWidgetItem* item);
+    void showContextMenu(const QPoint &pos);
+    void removeSource();
+    void updateSourcesFile();
 
 private:
     const QString sourcesFile = "/home/me/code/AetherView/sources.ae";
