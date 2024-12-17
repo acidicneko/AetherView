@@ -1,4 +1,3 @@
-
 // mainwindow.cpp
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
@@ -20,6 +19,12 @@ MainWindow::MainWindow(QWidget *parent)
     updateTimer = new QTimer(this);
     connect(updateTimer, &QTimer::timeout, this, &MainWindow::updateCharts);
     updateTimer->start(500); // Update every 1/2 second
+
+    if (sourcesList->count() > 0) {
+        QListWidgetItem* firstItem = sourcesList->item(0);
+        sourcesList->setCurrentItem(firstItem);
+        onSourceSelected(firstItem);  // Explicitly call onStationSelected
+    }
 }
 
 MainWindow::~MainWindow()
@@ -45,6 +50,20 @@ void MainWindow::setupUI()
         // Display a message if no Sources are loaded
         QMessageBox::warning(this, "Error", "No sources found in the file!");
     }
+
+    for(const QString &source : sources) {
+        SourceData *data = new SourceData;
+        data->voltageSeries = new QLineSeries();
+        data->currentSeries = new QLineSeries();
+        data->temperatureSeries = new QLineSeries();
+        data->humiditySeries = new QLineSeries();
+        data->lastVoltage = 0;
+        data->lastCurrent = 0;
+        data->lastTemperature = 0;
+        data->lastHumidity = 0;
+        sourcesData[source] = data;
+    }
+
 
     // Connect Source selection signal
     connect(sourcesList, &QListWidget::itemClicked, this, &MainWindow::onSourceSelected);
@@ -164,7 +183,7 @@ QChart* MainWindow::createChart(const QString &title, double yMin, double yMax)
 }
 void MainWindow::onSourceSelected(QListWidgetItem* item)
 {
-    currentSource = item->text();
+    /*currentSource = item->text();
 
     // Clear existing data
     voltageSeries->clear();
@@ -179,12 +198,108 @@ void MainWindow::onSourceSelected(QListWidgetItem* item)
     humidityChart->setTitle(QString("Humidity (%) - %1").arg(currentSource));
 
     // Reset time counter when switching Sources
+    timeCounter = 0;*/
+    currentSource = item->text();
+
+    // Update chart titles
+    voltageChart->setTitle(QString("Voltage (V) - %1").arg(currentSource));
+    currentChart->setTitle(QString("Current (A) - %1").arg(currentSource));
+    temperatureChart->setTitle(QString("Temperature (°C) - %1").arg(currentSource));
+    humidityChart->setTitle(QString("Humidity (%) - %1").arg(currentSource));
+
+    // Safely remove old series
+    if (voltageChart->series().count() > 0) {
+        QLineSeries* oldVoltageSeries = qobject_cast<QLineSeries*>(voltageChart->series().first());
+        if (oldVoltageSeries) {
+            voltageChart->removeSeries(oldVoltageSeries);
+        }
+    }
+
+    if (currentChart->series().count() > 0) {
+        QLineSeries* oldCurrentSeries = qobject_cast<QLineSeries*>(currentChart->series().first());
+        if (oldCurrentSeries) {
+            currentChart->removeSeries(oldCurrentSeries);
+        }
+    }
+
+    if (temperatureChart->series().count() > 0) {
+        QLineSeries* oldTempSeries = qobject_cast<QLineSeries*>(temperatureChart->series().first());
+        if (oldTempSeries) {
+            temperatureChart->removeSeries(oldTempSeries);
+        }
+    }
+
+    if (humidityChart->series().count() > 0) {
+        QLineSeries* oldHumidSeries = qobject_cast<QLineSeries*>(humidityChart->series().first());
+        if (oldHumidSeries) {
+            humidityChart->removeSeries(oldHumidSeries);
+        }
+    }
+
+    // Get data for selected station
+    SourceData *data = sourcesData[currentSource];
+
+    // Clear existing data points but keep the series
+    data->voltageSeries->clear();
+    data->currentSeries->clear();
+    data->temperatureSeries->clear();
+    data->humiditySeries->clear();
+
+    // Add new series
+    voltageChart->addSeries(data->voltageSeries);
+    currentChart->addSeries(data->currentSeries);
+    temperatureChart->addSeries(data->temperatureSeries);
+    humidityChart->addSeries(data->humiditySeries);
+
+    // Attach axes
+    data->voltageSeries->attachAxis(voltageChart->axes(Qt::Horizontal).first());
+    data->voltageSeries->attachAxis(voltageChart->axes(Qt::Vertical).first());
+
+    data->currentSeries->attachAxis(currentChart->axes(Qt::Horizontal).first());
+    data->currentSeries->attachAxis(currentChart->axes(Qt::Vertical).first());
+
+    data->temperatureSeries->attachAxis(temperatureChart->axes(Qt::Horizontal).first());
+    data->temperatureSeries->attachAxis(temperatureChart->axes(Qt::Vertical).first());
+
+    data->humiditySeries->attachAxis(humidityChart->axes(Qt::Horizontal).first());
+    data->humiditySeries->attachAxis(humidityChart->axes(Qt::Vertical).first());
+
+    // Reset time counter when switching stations
     timeCounter = 0;
+}
+
+void MainWindow::checkAlarms(const QString &station, SourceData *data)
+{
+    bool hasAlarm = false;
+
+    // Check all parameters against thresholds
+    if(data->lastVoltage > VOLTAGE_MAX ||
+        data->lastCurrent > CURRENT_MAX ||
+        data->lastTemperature > TEMP_MAX ||
+        data->lastHumidity > HUMIDITY_MAX) {
+        hasAlarm = true;
+    }
+
+    // Find the item in the list widget
+    for(int i = 0; i < sourcesList->count(); i++) {
+        QListWidgetItem *item = sourcesList->item(i);
+        if(item->text() == station) {
+            // Set background color based on alarm status
+            if(hasAlarm) {
+                item->setBackground(Qt::red);
+                item->setForeground(Qt::white);
+            } else {
+                item->setBackground(Qt::white);
+                item->setForeground(Qt::black);
+            }
+            break;
+        }
+    }
 }
 
 void MainWindow::updateCharts()
 {
-    if (currentSource.isEmpty()) return;
+    /*if (currentSource.isEmpty()) return;
 
     timeCounter += 1;
 
@@ -211,6 +326,43 @@ void MainWindow::updateCharts()
     // Update axes ranges
     for(QChart *chart : {voltageChart, currentChart, temperatureChart, humidityChart}) {
         chart->axes(Qt::Horizontal).first()->setRange(qMax(0.0, timeCounter - 10), timeCounter);
+    }*/
+    timeCounter += 1;
+
+    // Update data for all stations
+    for(auto it = sourcesData.begin(); it != sourcesData.end(); ++it) {
+        QString station = it.key();
+        SourceData *data = it.value();
+
+        // Generate random values (replace with your actual data)
+        data->lastVoltage = rand() % 250;
+        data->lastCurrent = rand() % 100;
+        data->lastTemperature = 20 + (rand() % 30);
+        data->lastHumidity = rand() % 100;
+
+        // Only store last 10 seconds of data
+        if(data->voltageSeries->count() >= 10) {
+            // Remove oldest point before adding new one
+            data->voltageSeries->remove(0);
+            data->currentSeries->remove(0);
+            data->temperatureSeries->remove(0);
+            data->humiditySeries->remove(0);
+        }
+
+        // Add new data points
+        data->voltageSeries->append(timeCounter, data->lastVoltage);
+        data->currentSeries->append(timeCounter, data->lastCurrent);
+        data->temperatureSeries->append(timeCounter, data->lastTemperature);
+        data->humiditySeries->append(timeCounter, data->lastHumidity);
+
+        // Check for alarms
+        checkAlarms(station, data);
+    }
+
+    // Update axes ranges for visible charts
+    double minX = qMax(0.0, timeCounter - 10);
+    for(QChart *chart : {voltageChart, currentChart, temperatureChart, humidityChart}) {
+        chart->axes(Qt::Horizontal).first()->setRange(minX, timeCounter);
     }
 }
 
